@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 # fence_magalucloud.py — Fence Agent para Magalu Cloud (ClusterLabs / Pacemaker)
 #
 # Segue a especificação técnica do ClusterLabs:
