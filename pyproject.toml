@@ -10,11 +10,11 @@ authors = [{ name = "danielsabatini" }]
 keywords = []
 
 dependencies = [
-  
+  "requests>=2.28",
 ]
 
 [project.scripts]
-fence-magalucloud     = "fence_magalucloud:fence_magalucloud:main"
+fence-magalucloud     = "fence_magalucloud:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -30,7 +30,7 @@ packages = ["src/fence_magalucloud"]
 target-version = "py311"
 line-length = 100
 src = ["src", "tests"]
-exclude = ["build", "dist", "__pycache__", "*.egg-info", ".venv"]
+exclude = ["build", "dist", "__pycache__", "*.egg-info", ".venv", "src/fence_magalucloud/fencing.py"]
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "PL", "PT"]
@@ -48,7 +48,7 @@ pythonVersion = "3.11"
 typeCheckingMode = "basic"
 include = ["src", "tests"]
 extraPaths = ["src"]
-exclude = ["build", "dist", "**/__pycache__", "**/*.egg-info", ".venv"]
+exclude = ["build", "dist", "**/__pycache__", "**/*.egg-info", ".venv", "src/fence_magalucloud/fencing.py"]
 venvPath = "."
 venv = ".venv"
 reportMissingImports = "none"
