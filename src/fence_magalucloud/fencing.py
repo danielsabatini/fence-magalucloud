@@ -1,4 +1,5 @@
-#!@PYTHON@ -tt
+#!/usr/bin/env python3
+from __future__ import annotations
 
 import getopt
 import itertools
@@ -6,6 +7,7 @@ import logging
 import os
 import re
 import shlex
+import shutil
 import socket
 import stat
 import subprocess
@@ -15,11 +17,43 @@ import textwrap
 import threading
 import time
 import uuid
+from typing import Any
 
-import pexpect
-import pycurl
+try:
+    import pexpect  # type: ignore[assignment]
+    import pycurl  # type: ignore[assignment]
 
-RELEASE_VERSION = '@RELEASE_VERSION@'
+    _HAS_PEXPECT = True
+except ImportError:
+    _HAS_PEXPECT = False
+
+    class _PexpectStubException(Exception):
+        """Stub exception used when pexpect is not installed."""
+
+    class _PycurlStubException(Exception):
+        """Stub exception used when pycurl is not installed."""
+
+    # Create minimal stubs so that except clauses referencing these names
+    # are syntactically valid even without the libraries installed.
+    class pexpect:  # type: ignore[no-redef]
+        EOF = _PexpectStubException
+        TIMEOUT = _PexpectStubException
+        ExceptionPexpect = _PexpectStubException
+
+        @staticmethod
+        def run(*args: object, **kwargs: object) -> object:
+            raise ImportError(_PEXPECT_MISSING_FULL)
+
+    class pycurl:  # type: ignore[no-redef]
+        error = _PycurlStubException
+
+
+RELEASE_VERSION = '1.0.0'
+_MIN_QUORUM_POLL_SECONDS = 5.0
+
+_PEXPECT_MISSING = 'pexpect é necessário para fencing via SSH/telnet.'
+_PEXPECT_MISSING_FULL = _PEXPECT_MISSING + ' Instale-o com: pip install pexpect'
+_SSH_HOST_KEY_PROMPT = 'Are you sure you want to continue connecting (yes/no)?'
 
 __all__ = [
     'atexit_handler',
@@ -339,7 +373,8 @@ all_opt = {
     'plug_separator': {
         'getopt': ':',
         'longopt': 'plug-separator',
-        'help': '--plug-separator=[char]        Separator for plug parameter when specifying more than 1 plug',
+        'help': '--plug-separator=[char]        Separator for plug parameter when '
+        'specifying more than 1 plug',
         'default': ',',
         'required': '0',
         'order': 100,
@@ -365,7 +400,8 @@ all_opt = {
         'getopt': ':',
         'longopt': 'shell-timeout',
         'type': 'second',
-        'help': '--shell-timeout=[seconds]      Wait X seconds for cmd prompt after issuing command',
+        'help': '--shell-timeout=[seconds]      Wait X seconds for cmd prompt after issuing'
+        ' command',
         'default': '3',
         'required': '0',
         'order': 200,
@@ -382,7 +418,8 @@ all_opt = {
     'disable_timeout': {
         'getopt': ':',
         'longopt': 'disable-timeout',
-        'help': '--disable-timeout=[true/false]     Disable timeout (true/false) (default: true when run from Pacemaker 2.0+)',
+        'help': '--disable-timeout=[true/false]     Disable timeout (true/false) '
+        '(default: true when run from Pacemaker 2.0+)',
         'required': '0',
         'order': 200,
     },
@@ -399,7 +436,8 @@ all_opt = {
         'getopt': ':',
         'longopt': 'stonith-status-sleep',
         'type': 'second',
-        'help': '--stonith-status-sleep=[seconds]   Sleep X seconds between status calls during a STONITH action',
+        'help': '--stonith-status-sleep=[seconds]   Sleep X seconds between status calls '
+        'during a STONITH action',
         'default': '1',
         'required': '0',
         'order': 200,
@@ -430,7 +468,8 @@ all_opt = {
     'sudo': {
         'getopt': '',
         'longopt': 'use-sudo',
-        'help': '--use-sudo                     Use sudo (without password) when calling 3rd party software',
+        'help': '--use-sudo                     Use sudo (without password) when calling '
+        '3rd party software',
         'required': '0',
         'order': 205,
     },
@@ -449,7 +488,7 @@ all_opt = {
         'longopt': 'telnet-path',
         'help': '--telnet-path=[path]           Path to telnet binary',
         'required': '0',
-        'default': '@TELNET_PATH@',
+        'default': shutil.which('telnet') or '/usr/bin/telnet',
         'order': 300,
     },
     'ssh_path': {
@@ -457,7 +496,7 @@ all_opt = {
         'longopt': 'ssh-path',
         'help': '--ssh-path=[path]              Path to ssh binary',
         'required': '0',
-        'default': '@SSH_PATH@',
+        'default': shutil.which('ssh') or '/usr/bin/ssh',
         'order': 300,
     },
     'gnutlscli_path': {
@@ -465,7 +504,7 @@ all_opt = {
         'longopt': 'gnutlscli-path',
         'help': '--gnutlscli-path=[path]        Path to gnutls-cli binary',
         'required': '0',
-        'default': '@GNUTLSCLI_PATH@',
+        'default': shutil.which('gnutls-cli') or '/usr/bin/gnutls-cli',
         'order': 300,
     },
     'sudo_path': {
@@ -473,7 +512,7 @@ all_opt = {
         'longopt': 'sudo-path',
         'help': '--sudo-path=[path]             Path to sudo binary',
         'required': '0',
-        'default': '@SUDO_PATH@',
+        'default': shutil.which('sudo') or '/usr/bin/sudo',
         'order': 300,
     },
     'snmpwalk_path': {
@@ -481,7 +520,7 @@ all_opt = {
         'longopt': 'snmpwalk-path',
         'help': '--snmpwalk-path=[path]         Path to snmpwalk binary',
         'required': '0',
-        'default': '@SNMPWALK_PATH@',
+        'default': shutil.which('snmpwalk') or '/usr/bin/snmpwalk',
         'order': 300,
     },
     'snmpset_path': {
@@ -489,7 +528,7 @@ all_opt = {
         'longopt': 'snmpset-path',
         'help': '--snmpset-path=[path]          Path to snmpset binary',
         'required': '0',
-        'default': '@SNMPSET_PATH@',
+        'default': shutil.which('snmpset') or '/usr/bin/snmpset',
         'order': 300,
     },
     'snmpget_path': {
@@ -497,7 +536,7 @@ all_opt = {
         'longopt': 'snmpget-path',
         'help': '--snmpget-path=[path]          Path to snmpget binary',
         'required': '0',
-        'default': '@SNMPGET_PATH@',
+        'default': shutil.which('snmpget') or '/usr/bin/snmpget',
         'order': 300,
     },
     'snmp': {'getopt': '', 'help': '', 'order': 1},
@@ -512,7 +551,8 @@ all_opt = {
     'quiet': {
         'getopt': 'q',
         'longopt': 'quiet',
-        'help': '-q, --quiet                    Disable logging to stderr. Does not affect --verbose or --debug-file or logging to syslog.',
+        'help': '-q, --quiet                    Disable logging to stderr. Does not affect '
+        '--verbose or --debug-file or logging to syslog.',
         'required': '0',
         'order': 50,
     },
@@ -560,31 +600,60 @@ DEPENDENCY_OPT = {
 }
 
 
-class fspawn(pexpect.spawn):
-    def __init__(self, options, command, **kwargs):
-        if sys.version_info[0] > 2:
+if _HAS_PEXPECT:
+
+    class fspawn(pexpect.spawn):  # pyright: ignore[reportRedeclaration,reportAttributeAccessIssue]
+        def __init__(self, options: dict[str, Any], command: str, **kwargs: object) -> None:
             kwargs.setdefault('encoding', 'utf-8')
-        logging.info('Running command: %s', command)
-        pexpect.spawn.__init__(self, command, **kwargs)
-        self.opt = options
+            logging.info('Running command: %s', command)
+            pexpect.spawn.__init__(self, command, **kwargs)  # type: ignore[attr-defined]
+            self.opt = options
 
-    def log_expect(self, pattern, timeout):
-        result = self.expect(pattern, timeout if timeout != 0 else None)
-        logging.debug('Received: %s', self.before + self.after)
-        return result
+        def log_expect(self, pattern: object, timeout: int) -> int:
+            result = self.expect(pattern, timeout if timeout != 0 else None)
+            logging.debug('Received: %s', str(self.before or '') + str(self.after or ''))
+            return result
 
-    def read_nonblocking(self, size, timeout):
-        return pexpect.spawn.read_nonblocking(
-            self, size=100, timeout=timeout if timeout != 0 else None
-        )
+        def read_nonblocking(self, size: int, timeout: int) -> str:
+            return pexpect.spawn.read_nonblocking(  # type: ignore[attr-defined]
+                self, size=100, timeout=timeout if timeout != 0 else None
+            )
 
-    def send(self, message):
-        logging.debug('Sent: %s', message)
-        return pexpect.spawn.send(self, message)
+        def send(self, message: str) -> int:
+            logging.debug('Sent: %s', message)
+            return pexpect.spawn.send(self, message)  # type: ignore[attr-defined]
 
-    # send EOL according to what was detected in login process (telnet)
-    def send_eol(self, message):
-        return self.send(message + self.opt['eol'])
+        # send EOL according to what was detected in login process (telnet)
+        def send_eol(self, message: str) -> int:
+            return self.send(message + self.opt['eol'])
+
+else:
+
+    class fspawn:  # type: ignore[no-redef]
+        """Stub: pexpect não instalado. Agentes HTTP não precisam de SSH/telnet."""
+
+        after: str = ''
+
+        def __init__(self, options: dict[str, Any], command: str, **kwargs: object) -> None:
+            raise ImportError(_PEXPECT_MISSING_FULL)
+
+        def log_expect(self, pattern: object, timeout: int) -> int:
+            raise ImportError(_PEXPECT_MISSING)
+
+        def read_nonblocking(self, size: int, timeout: int) -> str:
+            raise ImportError(_PEXPECT_MISSING)
+
+        def send(self, message: str) -> int:
+            raise ImportError(_PEXPECT_MISSING)
+
+        def send_eol(self, message: str) -> int:
+            raise ImportError(_PEXPECT_MISSING)
+
+        def sendline(self, message: str = '') -> int:
+            raise ImportError(_PEXPECT_MISSING)
+
+        def close(self) -> None:
+            raise ImportError(_PEXPECT_MISSING)
 
 
 def frun(
@@ -598,8 +667,9 @@ def frun(
     env=None,
     **kwargs,
 ):
-    if sys.version_info[0] > 2:
-        kwargs.setdefault('encoding', 'utf-8')
+    if not _HAS_PEXPECT:
+        raise ImportError(_PEXPECT_MISSING_FULL)
+    kwargs.setdefault('encoding', 'utf-8')
     return pexpect.run(
         command,
         timeout=timeout if timeout != 0 else None,
@@ -613,7 +683,7 @@ def frun(
     )
 
 
-def atexit_handler():
+def atexit_handler() -> None:
     try:
         sys.stdout.close()
         os.close(1)
@@ -622,12 +692,12 @@ def atexit_handler():
         sys.exit(EC_GENERIC_ERROR)
 
 
-def _add_dependency_options(options):
-    ## Add also options which are available for every fence agent
+def _add_dependency_options(options: list[str]) -> list[str]:
+    # Add also options which are available for every fence agent
     added_opt = []
     for opt in options + ['default']:
         if opt in DEPENDENCY_OPT:
-            added_opt.extend([y for y in DEPENDENCY_OPT[opt] if options.count(y) == 0])
+            added_opt.extend([y for y in DEPENDENCY_OPT[opt] if y not in options])
 
     if (
         'port' not in (options + added_opt)
@@ -643,7 +713,7 @@ def _add_dependency_options(options):
     return added_opt
 
 
-def fail_usage(message='', stop=True):
+def fail_usage(message: str = '', stop: bool = True) -> None:
     if len(message) > 0:
         logging.error('%s\n', message)
     if stop:
@@ -651,7 +721,7 @@ def fail_usage(message='', stop=True):
         sys.exit(EC_GENERIC_ERROR)
 
 
-def fail(error_code, stop=True):
+def fail(error_code: int, stop: bool = True) -> None:
     message = {
         EC_GENERIC_ERROR: 'Failed: Generic error',
         EC_LOGIN_DENIED: 'Unable to connect/login to fencing device',
@@ -663,15 +733,17 @@ def fail(error_code, stop=True):
         EC_STATUS_HMC: 'Failed: Either unable to obtain correct plug status, '
         'partition is not available or incorrect HMC version used',
         EC_PASSWORD_MISSING: 'Failed: You have to set login password',
-        EC_INVALID_PRIVILEGES: 'Failed: The user does not have the correct privileges to do the requested action.',
-        EC_FETCH_VM_UUID: 'Failed: Can not find VM UUID by its VM name given in the <plug> parameter.',
+        EC_INVALID_PRIVILEGES: 'Failed: The user does not have the correct privileges '
+        'to do the requested action.',
+        EC_FETCH_VM_UUID: 'Failed: Can not find VM UUID by its VM name given in the '
+        '<plug> parameter.',
     }[error_code] + '\n'
     logging.error('%s\n', message)
     if stop:
-        sys.exit(EC_GENERIC_ERROR)
+        sys.exit(error_code)
 
 
-def usage(avail_opt):
+def usage(avail_opt: list[str]) -> None:
     print('Usage:')
     print('\t' + os.path.basename(sys.argv[0]) + ' [options]')
     print('Options:')
@@ -679,22 +751,25 @@ def usage(avail_opt):
     sorted_list = [(key, all_opt[key]) for key in avail_opt]
     sorted_list.sort(key=lambda x: x[1]['order'])
 
-    for key, value in sorted_list:
+    for _, value in sorted_list:
         if len(value['help']) != 0:
             print('   ' + _join_wrap([value['help']], first_indent=3))
 
 
-def metadata(options, avail_opt, docs, agent_name=os.path.basename(sys.argv[0])):
+def metadata(  # noqa: PLR0912, PLR0915
+    options: dict[str, Any],
+    avail_opt: list[str],
+    docs: dict[str, Any],
+    agent_name: str = os.path.basename(sys.argv[0]),
+) -> None:
     # avail_opt has to be unique, if there are duplicities then they should be removed
-    sorted_list = [(key, all_opt[key]) for key in list(set(avail_opt)) if 'longopt' in all_opt[key]]
+    sorted_list = [(key, all_opt[key]) for key in set(avail_opt) if 'longopt' in all_opt[key]]
     # Find keys that are going to replace inconsistent names
-    mapping = dict(
-        [
-            (opt['longopt'].replace('-', '_'), key)
-            for (key, opt) in sorted_list
-            if (key != opt['longopt'].replace('-', '_'))
-        ]
-    )
+    mapping = {
+        opt['longopt'].replace('-', '_'): key
+        for (key, opt) in sorted_list
+        if (key != opt['longopt'].replace('-', '_'))
+    }
     new_options = [(key, all_opt[mapping[key]]) for key in mapping]
     sorted_list.extend(new_options)
 
@@ -736,9 +811,9 @@ def metadata(options, avail_opt, docs, agent_name=os.path.basename(sys.argv[0]))
                 default = 'default="' + _encode_html_entities(str(opt['default'])) + '" '
 
             mixed = opt['help']
-            ## split it between option and help text
+            # split it between option and help text
             res = re.compile(r'^(.*?--\S+)\s+', re.IGNORECASE | re.S).search(mixed)
-            if None != res:
+            if res is not None:
                 mixed = res.group(1)
             mixed = _encode_html_entities(mixed)
 
@@ -753,7 +828,7 @@ def metadata(options, avail_opt, docs, agent_name=os.path.basename(sys.argv[0]))
                 for choice in opt['choices']:
                     print('\t\t\t<option value="%s" />' % (choice))
                 print('\t\t</content>')
-            elif opt['getopt'].count(':') > 0:
+            elif ':' in opt['getopt']:
                 t = opt.get('type', 'string')
                 print('\t\t<content type="%s" ' % (t) + default + ' />')
             else:
@@ -767,10 +842,10 @@ def metadata(options, avail_opt, docs, agent_name=os.path.basename(sys.argv[0]))
 
     if 'on' in available_actions:
         available_actions.remove('on')
-        on_target = ' on_target="1"' if avail_opt.count('on_target') else ''
+        on_target = ' on_target="1"' if 'on_target' in avail_opt else ''
         print(
             '\t<action name="on"%s automatic="%d"/>'
-            % (on_target, avail_opt.count('fabric_fencing'))
+            % (on_target, int('fabric_fencing' in avail_opt))
         )
 
     for action in available_actions:
@@ -779,7 +854,7 @@ def metadata(options, avail_opt, docs, agent_name=os.path.basename(sys.argv[0]))
     print('</resource-agent>')
 
 
-def process_input(avail_opt):
+def process_input(avail_opt: list[str]) -> dict[str, Any]:
     avail_opt.extend(_add_dependency_options(avail_opt))
 
     # @todo: this should be put elsewhere?
@@ -800,12 +875,11 @@ def process_input(avail_opt):
     return opt
 
 
-##
-## This function checks input and answers if we want to have same answers
-## in each of the fencing agents. It looks for possible errors and run
-## password script to set a correct password
-######
-def check_input(device_opt, opt, other_conditions=False):
+def check_input(  # noqa: PLR0912, PLR0915
+    device_opt: list[str],
+    opt: dict[str, Any],
+    other_conditions: bool = False,
+) -> dict[str, Any]:
     device_opt.extend(_add_dependency_options(device_opt))
 
     options = dict(opt)
@@ -815,8 +889,7 @@ def check_input(device_opt, opt, other_conditions=False):
     options = _set_default_values(options)
     options['--action'] = options['--action'].lower()
 
-    ## In special cases (show help, metadata or version) we don't need to check anything
-    #####
+    # In special cases (show help, metadata or version) we don't need to check anything
     # OCF compatibility
     if options['--action'] == 'meta-data':
         options['--action'] = 'metadata'
@@ -854,24 +927,23 @@ def check_input(device_opt, opt, other_conditions=False):
 
     formatter = logging.Formatter(LOG_FORMAT)
 
-    ## add logging to syslog
+    # add logging to syslog
     logging.getLogger().addHandler(SyslogLibHandler())
     if '--quiet' not in options:
-        ## add logging to stderr
-        stderrHandler = logging.StreamHandler(sys.stderr)
-        stderrHandler.setFormatter(formatter)
-        logging.getLogger().addHandler(stderrHandler)
+        # add logging to stderr
+        stderr_handler = logging.StreamHandler(sys.stderr)
+        stderr_handler.setFormatter(formatter)
+        logging.getLogger().addHandler(stderr_handler)
 
     (acceptable_actions, _) = _get_available_actions(device_opt)
 
-    if 1 == device_opt.count('fabric_fencing'):
+    if 'fabric_fencing' in device_opt:
         acceptable_actions.extend(['enable', 'disable'])
 
-    if 0 == acceptable_actions.count(options['--action']):
+    if options['--action'] not in acceptable_actions:
         fail_usage("Failed: Unrecognised action '" + options['--action'] + "'")
 
-    ## Compatibility layer
-    #####
+    # Compatibility layer
     if options['--action'] == 'enable':
         options['--action'] = 'on'
     if options['--action'] == 'disable':
@@ -895,12 +967,22 @@ def check_input(device_opt, opt, other_conditions=False):
             fail_usage('Failed: Unable to create file ' + options['--debug-file'])
 
     if '--snmp-priv-passwd-script' in options:
-        options['--snmp-priv-passwd'] = (
-            os.popen(options['--snmp-priv-passwd-script']).read().rstrip()
-        )
+        options['--snmp-priv-passwd'] = subprocess.run(
+            options['--snmp-priv-passwd-script'],
+            shell=True,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.rstrip()
 
     if '--password-script' in options:
-        options['--password'] = os.popen(options['--password-script']).read().rstrip()
+        options['--password'] = subprocess.run(
+            options['--password-script'],
+            shell=True,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.rstrip()
 
     if '--ssl-secure' in options or '--ssl-insecure' in options:
         options['--ssl'] = ''
@@ -917,10 +999,7 @@ def check_input(device_opt, opt, other_conditions=False):
     return options
 
 
-## Obtain a power status from possibly more than one plug
-##	"on" is returned if at least one plug is ON
-######
-def get_multi_power_fn(connection, options, get_power_fn):
+def get_multi_power_fn(connection: Any, options: dict[str, Any], get_power_fn: Any) -> str:
     status = 'off'
     plugs = options['--plugs'] if '--plugs' in options else ['']
 
@@ -928,8 +1007,6 @@ def get_multi_power_fn(connection, options, get_power_fn):
         try:
             options['--uuid'] = str(uuid.UUID(plug))
         except ValueError:
-            pass
-        except KeyError:
             pass
 
         options['--plug'] = plug
@@ -940,7 +1017,13 @@ def get_multi_power_fn(connection, options, get_power_fn):
     return status
 
 
-def async_set_multi_power_fn(connection, options, set_power_fn, get_power_fn, retry_attempts):
+def async_set_multi_power_fn(
+    connection: Any,
+    options: dict[str, Any],
+    set_power_fn: Any,
+    get_power_fn: Any,
+    retry_attempts: int,
+) -> bool:
     plugs = options['--plugs'] if '--plugs' in options else ['']
 
     for _ in range(retry_attempts):
@@ -968,7 +1051,12 @@ def async_set_multi_power_fn(connection, options, set_power_fn, get_power_fn, re
     return False
 
 
-def sync_set_multi_power_fn(connection, options, sync_set_power_fn, retry_attempts):
+def sync_set_multi_power_fn(
+    connection: Any,
+    options: dict[str, Any],
+    sync_set_power_fn: Any,
+    retry_attempts: int,
+) -> bool:
     success = True
     plugs = options['--plugs'] if '--plugs' in options else ['']
 
@@ -976,8 +1064,6 @@ def sync_set_multi_power_fn(connection, options, sync_set_power_fn, retry_attemp
         try:
             options['--uuid'] = str(uuid.UUID(plug))
         except ValueError:
-            pass
-        except KeyError:
             pass
 
         options['--plug'] = plug
@@ -992,21 +1078,31 @@ def sync_set_multi_power_fn(connection, options, sync_set_power_fn, retry_attemp
 
 
 def set_multi_power_fn(
-    connection, options, set_power_fn, get_power_fn, sync_set_power_fn, retry_attempts=1
-):
+    connection: Any,
+    options: dict[str, Any],
+    set_power_fn: Any,
+    get_power_fn: Any,
+    sync_set_power_fn: Any,
+    retry_attempts: int = 1,
+) -> bool:
 
-    if set_power_fn != None:
-        if get_power_fn != None:
+    if set_power_fn is not None:
+        if get_power_fn is not None:
             return async_set_multi_power_fn(
                 connection, options, set_power_fn, get_power_fn, retry_attempts
             )
-    elif sync_set_power_fn != None:
+    elif sync_set_power_fn is not None:
         return sync_set_multi_power_fn(connection, options, sync_set_power_fn, retry_attempts)
 
     return False
 
 
-def multi_reboot_cycle_fn(connection, options, reboot_cycle_fn, retry_attempts=1):
+def multi_reboot_cycle_fn(
+    connection: Any,
+    options: dict[str, Any],
+    reboot_cycle_fn: Any,
+    retry_attempts: int = 1,
+) -> bool:
     success = True
     plugs = options['--plugs'] if '--plugs' in options else ['']
 
@@ -1014,8 +1110,6 @@ def multi_reboot_cycle_fn(connection, options, reboot_cycle_fn, retry_attempts=1
         try:
             options['--uuid'] = str(uuid.UUID(plug))
         except ValueError:
-            pass
-        except KeyError:
             pass
 
         options['--plug'] = plug
@@ -1029,10 +1123,10 @@ def multi_reboot_cycle_fn(connection, options, reboot_cycle_fn, retry_attempts=1
     return success
 
 
-def show_docs(options, docs=None):
+def show_docs(options: dict[str, Any], docs: dict[str, Any] | None = None) -> None:
     device_opt = options['device_opt']
 
-    if docs == None:
+    if docs is None:
         docs = {}
         docs['shortdesc'] = 'Fence agent'
         docs['longdesc'] = ''
@@ -1057,34 +1151,30 @@ def show_docs(options, docs=None):
         sys.exit(0)
 
 
-def fence_action(
-    connection,
-    options,
-    set_power_fn,
-    get_power_fn,
-    get_outlet_list=None,
-    reboot_cycle_fn=None,
-    sync_set_power_fn=None,
-):
+def fence_action(  # noqa: PLR0912, PLR0915
+    connection: Any,
+    options: dict[str, Any],
+    set_power_fn: Any,
+    get_power_fn: Any,
+    get_outlet_list: Any = None,
+    reboot_cycle_fn: Any = None,
+    sync_set_power_fn: Any = None,
+) -> int:
     result = EC_OK
 
     try:
         if '--plug' in options:
             options['--plugs'] = options['--plug'].split(options['--plug-separator'])
 
-        ## Process options that manipulate fencing device
-        #####
+        # Process options that manipulate fencing device
         if (options['--action'] in ['list', 'list-status']) or (
             (options['--action'] == 'monitor')
-            and 1 == options['device_opt'].count('port')
-            and 0 == options['device_opt'].count('port_as_ip')
+            and 'port' in options['device_opt']
+            and 'port_as_ip' not in options['device_opt']
         ):
-            if 0 == options['device_opt'].count('port'):
+            if 'port' not in options['device_opt']:
                 print('N/A')
-            elif get_outlet_list == None:
-                ## @todo: exception?
-                ## This is just temporal solution, we will remove default value
-                ## None as soon as all existing agent will support this operation
+            elif get_outlet_list is None:
                 print('NOTICE: List option is not working on this device yet')
             else:
                 options['--original-action'] = options['--action']
@@ -1093,8 +1183,8 @@ def fence_action(
                 options['--action'] = options['--original-action']
                 del options['--original-action']
 
-                ## keys can be numbers (port numbers) or strings (names of VM, UUID)
-                for outlet_id in list(outlets.keys()):
+                # keys can be numbers (port numbers) or strings (names of VM, UUID)
+                for outlet_id in outlets:
                     (alias, status) = outlets[outlet_id]
                     if status is None or (status.upper() not in ['ON', 'OFF']):
                         status = 'UNKNOWN'
@@ -1144,7 +1234,7 @@ def fence_action(
         status = None
         if 'no_status' not in options['device_opt']:
             status = get_multi_power_fn(connection, options, get_power_fn)
-            if status != 'on' and status != 'off':
+            if status not in {'on', 'off'}:
                 fail(EC_STATUS)
 
         if options['--action'] == status:
@@ -1212,7 +1302,7 @@ def fence_action(
                 # switch back to original action for the case it is used lateron
                 options['--action'] = 'reboot'
 
-            if power_on == False:
+            if not power_on:
                 # this should not fail as node was fenced succesfully
                 logging.error('Timed out waiting to power ON\n')
 
@@ -1222,10 +1312,10 @@ def fence_action(
             if status.upper() == 'OFF':
                 result = 2
         elif options['--action'] == 'monitor':
-            pass
+            pass  # monitor action: success is implicit — no output required
     except pexpect.EOF:
         fail(EC_CONNECTION_LOST)
-    except pexpect.TIMEOUT:
+    except pexpect.TIMEOUT:  # type: ignore[misc]
         fail(EC_TIMED_OUT)
     except pycurl.error as ex:
         logging.error('%s\n', str(ex))
@@ -1238,14 +1328,15 @@ def fence_action(
 
 
 def fence_login(
-    options, re_login_string=r'(login\s*: )|((?!Last )Login Name:  )|(username: )|(User Name :)'
-):
+    options: dict[str, Any],
+    re_login_string: str = r'(login\s*: )|((?!Last )Login Name:  )|(username: )|(User Name :)',
+) -> fspawn:
     run_delay(options)
 
     if 'eol' not in options:
         options['eol'] = '\r\n'
 
-    if '--command-prompt' in options and type(options['--command-prompt']) is not list:
+    if '--command-prompt' in options and not isinstance(options['--command-prompt'], list):
         options['--command-prompt'] = [options['--command-prompt']]
 
     try:
@@ -1260,13 +1351,13 @@ def fence_login(
     except pexpect.EOF as exception:
         logging.debug('%s', str(exception))
         fail(EC_LOGIN_DENIED)
-    except pexpect.TIMEOUT as exception:
+    except pexpect.TIMEOUT as exception:  # type: ignore[misc]
         logging.debug('%s', str(exception))
         fail(EC_LOGIN_DENIED)
     return conn
 
 
-def is_executable(path):
+def is_executable(path: str) -> bool:
     if os.path.exists(path):
         stats = os.stat(path)
         if stat.S_ISREG(stats.st_mode) and os.access(path, os.X_OK):
@@ -1274,7 +1365,13 @@ def is_executable(path):
     return False
 
 
-def run_commands(options, commands, timeout=None, env=None, log_command=None):
+def run_commands(  # noqa: PLR0912, PLR0915
+    options: dict[str, Any],
+    commands: list[str],
+    timeout: float | None = None,
+    env: dict[str, str] | None = None,
+    log_command: str | None = None,
+) -> tuple[int, str, str]:
     # inspired by psutils.wait_procs (BSD License)
     def check_gone(proc, timeout):
         try:
@@ -1309,7 +1406,7 @@ def run_commands(options, commands, timeout=None, env=None, log_command=None):
                 stderr=subprocess.PIPE,
                 env=env,
                 # decodes newlines and in python3 also converts bytes to str
-                universal_newlines=(sys.version_info[0] > 2),
+                universal_newlines=True,
             )
         except OSError:
             fail_usage('Unable to run %s\n' % command)
@@ -1323,17 +1420,16 @@ def run_commands(options, commands, timeout=None, env=None, log_command=None):
         if alive:
             max_timeout = 2.0 / len(alive)
             for proc in alive:
-                if timeout is not None:
-                    if time.time() - time_start >= timeout:
-                        # quickly go over the rest
-                        max_timeout = 0
+                if timeout is not None and time.time() - time_start >= timeout:
+                    # quickly go over the rest
+                    max_timeout = 0
                 check_gone(proc, max_timeout)
             alive = alive - gone
 
         if not alive:
             break
 
-        if time.time() - time_start < 5.0:
+        if time.time() - time_start < _MIN_QUORUM_POLL_SECONDS:
             # give it at least 5s to get a complete answer
             # afterwards we're OK with a quorate answer
             continue
@@ -1347,10 +1443,9 @@ def run_commands(options, commands, timeout=None, env=None, log_command=None):
             if good_cnt > len(procs) / 2:
                 break
 
-        if timeout is not None:
-            if time.time() - time_start >= timeout:
-                logging.debug('Stop waiting after %s\n', str(timeout))
-                break
+        if timeout is not None and time.time() - time_start >= timeout:
+            logging.debug('Stop waiting after %s\n', str(timeout))
+            break
 
     logging.debug('Done: %d gone, %d alive\n', len(gone), len(alive))
 
@@ -1366,11 +1461,11 @@ def run_commands(options, commands, timeout=None, env=None, log_command=None):
         os.set_blocking(proc.stderr.fileno(), False)
         try:
             pipe_stdout += proc.stdout.read()
-        except:
+        except OSError:
             pass
         try:
             pipe_stderr += proc.stderr.read()
-        except:
+        except OSError:
             pass
         proc.stdout.close()
         proc.stderr.close()
@@ -1389,7 +1484,13 @@ def run_commands(options, commands, timeout=None, env=None, log_command=None):
     return (status, pipe_stdout, pipe_stderr)
 
 
-def run_command(options, command, timeout=None, env=None, log_command=None):
+def run_command(
+    options: dict[str, Any],
+    command: str,
+    timeout: float | None = None,
+    env: dict[str, str] | None = None,
+    log_command: str | None = None,
+) -> tuple[int, str, str]:
     if timeout is None and '--power-timeout' in options:
         timeout = options['--power-timeout']
     if timeout is not None:
@@ -1403,8 +1504,8 @@ def run_command(options, command, timeout=None, env=None, log_command=None):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
-            # decodes newlines and in python3 also converts bytes to str
-            universal_newlines=(sys.version_info[0] > 2),
+            # decodes newlines and converts bytes to str
+            universal_newlines=True,
         )
     except OSError:
         fail_usage('Unable to run %s\n' % command)
@@ -1427,28 +1528,28 @@ def run_command(options, command, timeout=None, env=None, log_command=None):
     return (status, pipe_stdout, pipe_stderr)
 
 
-def run_delay(options, reserve=0, result=0):
-    ## Delay is important for two-node clusters fencing
-    ## but we do not need to delay 'status' operations
-    ## and get us out quickly if we already know that we are gonna fail
-    ## still wanna do something right before fencing? - reserve some time
+# Records when the fence agent process started, used by run_delay()
+_FENCE_START_TIME: float = time.time()
+
+
+def run_delay(options: dict[str, Any], reserve: int = 0, result: int = 0) -> None:
+    # Delay is important for two-node clusters fencing
+    # but we do not need to delay 'status' operations
+    # and get us out quickly if we already know that we are gonna fail
+    # still wanna do something right before fencing? - reserve some time
     if (
         options['--action'] in ['off', 'reboot']
         and options['--delay'] != '0'
         and result == 0
         and reserve >= 0
     ):
-        time_left = 1 + int(options['--delay']) - (time.time() - run_delay.time_start) - reserve
+        time_left = 1 + int(options['--delay']) - (time.time() - _FENCE_START_TIME) - reserve
         if time_left > 0:
             logging.info('Delay %d second(s) before logging in to the fence device', time_left)
             time.sleep(time_left)
 
 
-# mark time when fence-agent is started
-run_delay.time_start = time.time()
-
-
-def fence_logout(conn, logout_string, sleep=0):
+def fence_logout(conn: fspawn, logout_string: str, sleep: int = 0) -> None:
     # Logout is not required part of fencing but we should attempt to do it properly
     # In some cases our 'exit' command is faster and we can not close connection as it
     # was already closed by fencing device
@@ -1462,34 +1563,35 @@ def fence_logout(conn, logout_string, sleep=0):
         pass
 
 
-def source_env(env_file):
+def source_env(env_file: str) -> None:
     # POSIX: name shall not contain '=', value doesn't contain '\0'
     output = subprocess.check_output(
-        'source {} && env -0'.format(env_file), shell=True, executable='/bin/sh'
+        'source {} && env -0'.format(shlex.quote(env_file)), shell=True, executable='/bin/sh'
     )
-    # replace env
-    os.environ.clear()
-    os.environ.update(
-        line.partition('=')[::2]
+    new_env = {
+        key: value
         for line in output.decode('utf-8').split('\0')
         if not re.match(r'^\s*$', line)
-    )
+        for key, _, value in [line.partition('=')]
+    }
+    os.environ.clear()
+    os.environ.update(new_env)
 
 
 # Convert array of format [[key1, value1], [key2, value2], ... [keyN, valueN]] to dict, where key is
 # in format a.b.c.d...z and returned dict has key only z
-def array_to_dict(array):
-    return dict([[x[0].split('.')[-1], x[1]] for x in array])
+def array_to_dict(array: list[list[str]]) -> dict[str, str]:
+    return {x[0].split('.')[-1]: x[1] for x in array}
 
 
-## Own logger handler that uses old-style syslog handler as otherwise everything is sourced
-## from /dev/syslog
+# Own logger handler that uses old-style syslog handler as otherwise everything is sourced
+# from /dev/syslog
 class SyslogLibHandler(logging.StreamHandler):
     """
     A handler class that correctly push messages into syslog
     """
 
-    def emit(self, record):
+    def emit(self, record: logging.LogRecord) -> None:
         syslog_level = {
             logging.CRITICAL: syslog.LOG_CRIT,
             logging.ERROR: syslog.LOG_ERR,
@@ -1501,11 +1603,11 @@ class SyslogLibHandler(logging.StreamHandler):
 
         msg = self.format(record)
 
-        # syslos.syslog can not have 0x00 character inside or exception is thrown
+        # syslog.syslog can not have 0x00 character inside or exception is thrown
         syslog.syslog(syslog_level, msg.replace('\x00', '\n'))
 
 
-def _open_ssl_connection(options):
+def _open_ssl_connection(options: dict[str, Any]) -> fspawn:
     gnutls_opts = ''
     ssl_opts = ''
 
@@ -1521,11 +1623,11 @@ def _open_ssl_connection(options):
         ssl_opts = '--insecure'
 
     command = '%s %s %s --crlf -p %s %s' % (
-        options['--gnutlscli-path'],
+        shlex.quote(options['--gnutlscli-path']),
         gnutls_opts,
         ssl_opts,
-        options['--ipport'],
-        options['--ip'],
+        shlex.quote(str(options['--ipport'])),
+        shlex.quote(options['--ip']),
     )
     try:
         conn = fspawn(options, command)
@@ -1536,7 +1638,7 @@ def _open_ssl_connection(options):
     return conn
 
 
-def _login_ssh_with_identity_file(options):
+def _login_ssh_with_identity_file(options: dict[str, Any]) -> fspawn:
     if '--inet6-only' in options:
         force_ipvx = '-6 '
     elif '--inet4-only' in options:
@@ -1545,12 +1647,12 @@ def _login_ssh_with_identity_file(options):
         force_ipvx = ''
 
     command = '%s %s %s@%s -i %s -p %s' % (
-        options['--ssh-path'],
+        shlex.quote(options['--ssh-path']),
         force_ipvx,
-        options['--username'],
-        options['--ip'],
-        options['--identity-file'],
-        options['--ipport'],
+        shlex.quote(options['--username']),
+        shlex.quote(options['--ip']),
+        shlex.quote(options['--identity-file']),
+        shlex.quote(str(options['--ipport'])),
     )
     if '--ssh-options' in options:
         command += ' ' + options['--ssh-options']
@@ -1560,7 +1662,7 @@ def _login_ssh_with_identity_file(options):
     result = conn.log_expect(
         [
             "Enter passphrase for key '" + options['--identity-file'] + "':",
-            'Are you sure you want to continue connecting (yes/no)?',
+            _SSH_HOST_KEY_PROMPT,
         ]
         + options['--command-prompt'],
         int(options['--login-timeout']),
@@ -1582,50 +1684,53 @@ def _login_ssh_with_identity_file(options):
     return conn
 
 
-def _login_telnet(options, re_login_string):
+def _login_telnet(options: dict[str, Any], re_login_string: str) -> fspawn:
     re_login = re.compile(re_login_string, re.IGNORECASE)
     re_pass = re.compile(r'(password)|(pass phrase)', re.IGNORECASE)
 
-    conn = fspawn(options, options['--telnet-path'])
+    conn = fspawn(options, shlex.quote(options['--telnet-path']))
     conn.send('set binary\n')
     conn.send('open %s -%s\n' % (options['--ip'], options['--ipport']))
 
     conn.log_expect(re_login, int(options['--login-timeout']))
     conn.send_eol(options['--username'])
 
-    ## automatically change end of line separator
+    # automatically change end of line separator
     screen = conn.read_nonblocking(size=100, timeout=int(options['--shell-timeout']))
-    if re_login.search(screen) != None:
+    if re_login.search(screen) is not None:
         options['eol'] = '\n'
         conn.send_eol(options['--username'])
         conn.log_expect(re_pass, int(options['--login-timeout']))
-    elif re_pass.search(screen) == None:
+    elif re_pass.search(screen) is None:
         conn.log_expect(re_pass, int(options['--shell-timeout']))
 
     try:
-        conn.send_eol(options['--password'])
-        valid_password = conn.log_expect(
-            [re_login] + options['--command-prompt'], int(options['--shell-timeout'])
-        )
-        if valid_password == 0:
-            ## password is invalid or we have to change EOL separator
-            options['eol'] = '\r'
-            conn.send_eol('')
-            screen = conn.read_nonblocking(size=100, timeout=int(options['--shell-timeout']))
-            ## after sending EOL the fence device can either show 'Login' or 'Password'
-            if re_login.search(conn.after + screen) != None:
-                conn.send_eol('')
-            conn.send_eol(options['--username'])
-            conn.log_expect(re_pass, int(options['--login-timeout']))
-            conn.send_eol(options['--password'])
-            conn.log_expect(options['--command-prompt'], int(options['--login-timeout']))
+        password = options['--password']
     except KeyError:
         fail(EC_PASSWORD_MISSING)
+        return conn  # never reached, but satisfies type checker
+
+    conn.send_eol(password)
+    valid_password = conn.log_expect(
+        [re_login] + options['--command-prompt'], int(options['--shell-timeout'])
+    )
+    if valid_password == 0:
+        # password is invalid or we have to change EOL separator
+        options['eol'] = '\r'
+        conn.send_eol('')
+        screen = conn.read_nonblocking(size=100, timeout=int(options['--shell-timeout']))
+        # after sending EOL the fence device can either show 'Login' or 'Password'
+        if re_login.search(conn.after + screen) is not None:
+            conn.send_eol('')
+        conn.send_eol(options['--username'])
+        conn.log_expect(re_pass, int(options['--login-timeout']))
+        conn.send_eol(password)
+        conn.log_expect(options['--command-prompt'], int(options['--login-timeout']))
 
     return conn
 
 
-def _login_ssh_with_password(options, re_login_string):
+def _login_ssh_with_password(options: dict[str, Any], re_login_string: str) -> fspawn:
     re_login = re.compile(re_login_string, re.IGNORECASE)
     re_pass = re.compile(r'(password)|(pass phrase)', re.IGNORECASE)
 
@@ -1637,11 +1742,11 @@ def _login_ssh_with_password(options, re_login_string):
         force_ipvx = ''
 
     command = '%s %s %s@%s -p %s -o PubkeyAuthentication=no' % (
-        options['--ssh-path'],
+        shlex.quote(options['--ssh-path']),
         force_ipvx,
-        options['--username'],
-        options['--ip'],
-        options['--ipport'],
+        shlex.quote(options['--username']),
+        shlex.quote(options['--ip']),
+        shlex.quote(str(options['--ipport'])),
     )
     if '--ssh-options' in options:
         command += ' ' + options['--ssh-options']
@@ -1652,7 +1757,7 @@ def _login_ssh_with_password(options, re_login_string):
         # This is for stupid ssh servers (like ALOM) which behave more like telnet
         # (ignore name and display login prompt)
         result = conn.log_expect(
-            [re_login, 'Are you sure you want to continue connecting (yes/no)?'],
+            [re_login, _SSH_HOST_KEY_PROMPT],
             int(options['--login-timeout']),
         )
         if result == 1:
@@ -1663,7 +1768,7 @@ def _login_ssh_with_password(options, re_login_string):
         conn.log_expect(re_pass, int(options['--login-timeout']))
     else:
         result = conn.log_expect(
-            ['ssword:', 'Are you sure you want to continue connecting (yes/no)?'],
+            ['ssword:', _SSH_HOST_KEY_PROMPT],
             int(options['--login-timeout']),
         )
         if result == 1:
@@ -1678,15 +1783,15 @@ def _login_ssh_with_password(options, re_login_string):
 
 #
 # To update metadata, we change values in all_opt
-def _update_metadata(options):
+def _update_metadata(options: dict[str, Any]) -> None:
     device_opt = options['device_opt']
 
-    if device_opt.count('login') and device_opt.count('no_login') == 0:
+    if 'login' in device_opt and 'no_login' not in device_opt:
         all_opt['login']['required'] = '1'
     else:
         all_opt['login']['required'] = '0'
 
-    if device_opt.count('port_as_ip'):
+    if 'port_as_ip' in device_opt:
         all_opt['ipaddr']['required'] = '0'
         all_opt['port']['required'] = '0'
 
@@ -1694,22 +1799,22 @@ def _update_metadata(options):
     all_opt['action']['default'] = default_value
 
     actions_with_default = [
-        x if not x == all_opt['action']['default'] else x + ' (default)' for x in available_actions
+        x if x != all_opt['action']['default'] else x + ' (default)' for x in available_actions
     ]
     all_opt['action']['help'] = '-o, --action=[action]          Action: %s' % (
         _join_wrap(actions_with_default, last_separator=' or ')
     )
 
-    if device_opt.count('ipport'):
+    if 'ipport' in device_opt:
         default_value = None
         default_string = None
 
         if 'default' in all_opt['ipport']:
             default_value = all_opt['ipport']['default']
-        elif device_opt.count('web') and device_opt.count('ssl'):
+        elif 'web' in device_opt and 'ssl' in device_opt:
             default_value = '80'
             default_string = '(default 80, 443 if --ssl option is used)'
-        elif device_opt.count('telnet') and device_opt.count('secure'):
+        elif 'telnet' in device_opt and 'secure' in device_opt:
             default_value = '23'
             default_string = '(default 23, 22 if --ssh option is used)'
         else:
@@ -1722,7 +1827,7 @@ def _update_metadata(options):
             }
             # all cases where next command returns multiple results are covered by previous blocks
             protocol = [
-                x for x in ['community', 'secure', 'ssl', 'web', 'telnet'] if device_opt.count(x)
+                x for x in ['community', 'secure', 'ssl', 'web', 'telnet'] if x in device_opt
             ][0]
             default_value = tcp_ports[protocol]
 
@@ -1736,31 +1841,30 @@ def _update_metadata(options):
             )
 
 
-def _set_default_values(options):
-    if 'ipport' in options['device_opt']:
-        if '--ipport' not in options:
-            if 'default' in all_opt['ipport']:
-                options['--ipport'] = all_opt['ipport']['default']
-            elif 'community' in options['device_opt']:
-                options['--ipport'] = '161'
-            elif '--ssh' in options or all_opt['secure'].get('default', '0') == '1':
-                options['--ipport'] = '22'
-            elif '--ssl' in options or all_opt['ssl'].get('default', '0') == '1':
-                options['--ipport'] = '443'
-            elif '--ssl-secure' in options or all_opt['ssl_secure'].get('default', '0') == '1':
-                options['--ipport'] = '443'
-            elif '--ssl-insecure' in options or all_opt['ssl_insecure'].get('default', '0') == '1':
-                options['--ipport'] = '443'
-            elif 'web' in options['device_opt']:
-                options['--ipport'] = '80'
-            elif 'telnet' in options['device_opt']:
-                options['--ipport'] = '23'
+def _set_default_values(options: dict[str, Any]) -> dict[str, Any]:  # noqa: PLR0912
+    if 'ipport' in options['device_opt'] and '--ipport' not in options:
+        if 'default' in all_opt['ipport']:
+            options['--ipport'] = all_opt['ipport']['default']
+        elif 'community' in options['device_opt']:
+            options['--ipport'] = '161'
+        elif '--ssh' in options or all_opt['secure'].get('default', '0') == '1':
+            options['--ipport'] = '22'
+        elif '--ssl' in options or all_opt['ssl'].get('default', '0') == '1':
+            options['--ipport'] = '443'
+        elif '--ssl-secure' in options or all_opt['ssl_secure'].get('default', '0') == '1':
+            options['--ipport'] = '443'
+        elif '--ssl-insecure' in options or all_opt['ssl_insecure'].get('default', '0') == '1':
+            options['--ipport'] = '443'
+        elif 'web' in options['device_opt']:
+            options['--ipport'] = '80'
+        elif 'telnet' in options['device_opt']:
+            options['--ipport'] = '23'
 
-            if '--ipport' in options:
-                all_opt['ipport']['default'] = options['--ipport']
+        if '--ipport' in options:
+            all_opt['ipport']['default'] = options['--ipport']
 
     for opt in options['device_opt']:
-        if 'default' in all_opt[opt] and not opt == 'ipport':
+        if 'default' in all_opt[opt] and opt != 'ipport':
             getopt_long = '--' + all_opt[opt]['longopt']
             if getopt_long not in options:
                 options[getopt_long] = all_opt[opt]['default']
@@ -1769,20 +1873,16 @@ def _set_default_values(options):
 
 
 # stop = True/False : exit fence agent when problem is encountered
-def _validate_input(options, stop=True):
+def _validate_input(options: dict[str, Any], stop: bool = True) -> bool:  # noqa: PLR0912
     device_opt = options['device_opt']
     valid_input = True
 
-    if (
-        '--username' not in options
-        and device_opt.count('login')
-        and (device_opt.count('no_login') == 0)
-    ):
+    if '--username' not in options and 'login' in device_opt and 'no_login' not in device_opt:
         valid_input = False
         fail_usage('Failed: You have to set login name', stop)
 
     if (
-        device_opt.count('ipaddr')
+        'ipaddr' in device_opt
         and '--ip' not in options
         and '--managed' not in options
         and '--target' not in options
@@ -1790,8 +1890,8 @@ def _validate_input(options, stop=True):
         valid_input = False
         fail_usage('Failed: You have to enter fence address', stop)
 
-    if device_opt.count('no_password') == 0:
-        if 0 == device_opt.count('identity_file'):
+    if 'no_password' not in device_opt:
+        if 'identity_file' not in device_opt:
             if not ('--password' in options or '--password-script' in options):
                 valid_input = False
                 fail_usage('Failed: You have to enter password or password script', stop)
@@ -1801,9 +1901,7 @@ def _validate_input(options, stop=True):
             or '--identity-file' in options
         ):
             valid_input = False
-            fail_usage(
-                'Failed: You have to enter password, password script or identity file', stop
-            )
+            fail_usage('Failed: You have to enter password, password script or identity file', stop)
 
     if '--ssh' not in options and '--identity-file' in options:
         valid_input = False
@@ -1814,11 +1912,11 @@ def _validate_input(options, stop=True):
         fail_usage('Failed: Identity file ' + options['--identity-file'] + ' does not exist', stop)
 
     if (
-        (0 == ['list', 'list-status', 'monitor'].count(options['--action']))
+        options['--action'] not in ['list', 'list-status', 'monitor']
         and '--plug' not in options
-        and device_opt.count('port')
-        and device_opt.count('no_port') == 0
-        and not device_opt.count('port_as_ip')
+        and 'port' in device_opt
+        and 'no_port' not in device_opt
+        and 'port_as_ip' not in device_opt
     ):
         valid_input = False
         fail_usage('Failed: You have to enter plug number or machine identification', stop)
@@ -1849,7 +1947,7 @@ def _validate_input(options, stop=True):
     return valid_input
 
 
-def _encode_html_entities(text):
+def _encode_html_entities(text: str) -> str:
     return (
         text.replace('&', '&amp;')
         .replace('"', '&quot;')
@@ -1859,7 +1957,7 @@ def _encode_html_entities(text):
     )
 
 
-def _prepare_getopt_args(options):
+def _prepare_getopt_args(options: list[str]) -> tuple[str, list[str]]:
     getopt_string = ''
     longopt_list = []
     for k in options:
@@ -1878,14 +1976,14 @@ def _prepare_getopt_args(options):
     return (getopt_string, longopt_list)
 
 
-def _parse_input_stdin(avail_opt):
+def _parse_input_stdin(avail_opt: list[str]) -> dict[str, Any]:
     opt = {}
     name = ''
 
-    mapping_longopt_names = dict([(all_opt[o].get('longopt'), o) for o in avail_opt])
+    mapping_longopt_names = {all_opt[o].get('longopt'): o for o in avail_opt}
 
-    for line in sys.stdin.readlines():
-        line = line.strip()
+    for raw_line in sys.stdin.readlines():
+        line = raw_line.strip()
         if (line.startswith('#')) or (len(line) == 0):
             continue
 
@@ -1898,9 +1996,9 @@ def _parse_input_stdin(avail_opt):
         elif name.replace('_', '-') in mapping_longopt_names:
             name = mapping_longopt_names[name.replace('_', '-')]
 
-        if avail_opt.count(name) == 0 and name in ['nodename']:
+        if name not in avail_opt and name in ['nodename']:
             continue
-        elif avail_opt.count(name) == 0:
+        elif name not in avail_opt:
             logging.warning("Parse error: Ignoring unknown option '%s'\n", line)
             continue
 
@@ -1920,7 +2018,7 @@ def _parse_input_stdin(avail_opt):
     return opt
 
 
-def _parse_input_cmdline(avail_opt):
+def _parse_input_cmdline(avail_opt: list[str]) -> dict[str, Any]:
     filtered_opts = {}
     _verify_unique_getopt(avail_opt)
     (getopt_string, longopt_list) = _prepare_getopt_args(avail_opt)
@@ -1941,7 +2039,7 @@ def _parse_input_cmdline(avail_opt):
     for arg_name in [k for (k, v) in entered_opt]:
         all_key = [
             key
-            for (key, value) in list(filtered_opts.items())
+            for (key, value) in filtered_opts.items()
             if '--' + value.get('longopt', '') == arg_name
             or '-' + value.get('getopt', '').rstrip(':') == arg_name
         ][0]
@@ -1959,14 +2057,19 @@ def _parse_input_cmdline(avail_opt):
 
 
 # for ["John", "Mary", "Eli"] returns "John, Mary and Eli"
-def _join2(words, normal_separator=', ', last_separator=' and '):
+def _join2(words: list[str], normal_separator: str = ', ', last_separator: str = ' and ') -> str:
     if len(words) <= 1:
         return ''.join(words)
     else:
         return last_separator.join([normal_separator.join(words[:-1]), words[-1]])
 
 
-def _join_wrap(words, normal_separator=', ', last_separator=' and ', first_indent=42):
+def _join_wrap(
+    words: list[str],
+    normal_separator: str = ', ',
+    last_separator: str = ' and ',
+    first_indent: int = 42,
+) -> str:
     x = _join2(words, normal_separator, last_separator)
     wrapper = textwrap.TextWrapper()
     wrapper.initial_indent = ' ' * first_indent
@@ -1980,7 +2083,7 @@ def _join_wrap(words, normal_separator=', ', last_separator=' and ', first_inden
     return wrapped_text.lstrip().rstrip('\n')
 
 
-def _get_opts_with_invalid_choices(options):
+def _get_opts_with_invalid_choices(options: dict[str, Any]) -> list[str]:
     options_failed = []
     device_opt = options['device_opt']
 
@@ -1995,7 +2098,7 @@ def _get_opts_with_invalid_choices(options):
     return options_failed
 
 
-def _get_opts_with_invalid_types(options):
+def _get_opts_with_invalid_types(options: dict[str, Any]) -> list[str]:
     options_failed = []
     device_opt = options['device_opt']
 
@@ -2005,13 +2108,13 @@ def _get_opts_with_invalid_types(options):
             if longopt in options:
                 if all_opt[opt]['type'] in ['integer', 'second']:
                     try:
-                        number = int(options['--' + all_opt[opt]['longopt']])
+                        int(options['--' + all_opt[opt]['longopt']])
                     except ValueError:
                         options_failed.append(opt)
     return options_failed
 
 
-def _verify_unique_getopt(avail_opt):
+def _verify_unique_getopt(avail_opt: list[str]) -> None:
     used_getopt = set()
 
     for opt in avail_opt:
@@ -2022,7 +2125,7 @@ def _verify_unique_getopt(avail_opt):
             used_getopt.add(getopt_value)
 
 
-def _get_available_actions(device_opt):
+def _get_available_actions(device_opt: list[str]) -> tuple[list[str], str]:
     available_actions = [
         'on',
         'off',
@@ -2037,19 +2140,19 @@ def _get_available_actions(device_opt):
     ]
     default_value = 'reboot'
 
-    if device_opt.count('fabric_fencing'):
+    if 'fabric_fencing' in device_opt:
         available_actions.remove('reboot')
         default_value = 'off'
-    if device_opt.count('no_status'):
+    if 'no_status' in device_opt:
         available_actions.remove('status')
-    if device_opt.count('no_on'):
+    if 'no_on' in device_opt:
         available_actions.remove('on')
-    if device_opt.count('no_off'):
+    if 'no_off' in device_opt:
         available_actions.remove('off')
-    if not device_opt.count('separator'):
+    if 'separator' not in device_opt:
         available_actions.remove('list')
         available_actions.remove('list-status')
-    if device_opt.count('diag'):
+    if 'diag' in device_opt:
         available_actions.append('diag')
 
     return (available_actions, default_value)

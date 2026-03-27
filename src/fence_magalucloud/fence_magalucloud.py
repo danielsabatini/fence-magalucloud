@@ -19,7 +19,8 @@ import sys
 import requests
 
 # Em produção, @FENCEAGENTSLIBDIR@ é expandido pelo autoconf para o caminho real
-# (ex: /usr/share/fence). Em desenvolvimento local, o fencing.py está no mesmo pacote.
+# (ex: /usr/share/fence). Em instalação manual, crie um symlink do fencing.py para
+# o mesmo diretório do agente — o fallback abaixo o encontrará automaticamente.
 sys.path.append('@FENCEAGENTSLIBDIR@')
 try:
     from fencing import *  # noqa: F401, F403 — padrão obrigatório do ClusterLabs
@@ -36,8 +37,10 @@ try:
         show_docs,
     )
 except ImportError:
-    # Fallback para desenvolvimento local: fencing.py copiado para o pacote
-    sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent))
+    # Fallback: fencing.py no mesmo diretório do agente (symlink ou cópia local)
+    import pathlib
+
+    sys.path.insert(0, str(pathlib.Path(__file__).parent))
     from fencing import *  # noqa: F401, F403
     from fencing import (
         EC_LOGIN_DENIED,

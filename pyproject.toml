@@ -57,7 +57,10 @@ reportOptionalMemberAccess = "none"
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit", "tests/integration"]
-addopts = "--cov=src --cov-report=xml --cov-report=term --cov-report=html -vv"
+addopts = "--cov=src --cov-report=xml --cov-report=term --cov-report=html -vv --cov-config=pyproject.toml"
+
+[tool.coverage.run]
+omit = ["*/fencing.py"]
 
 [dependency-groups]
 dev = [

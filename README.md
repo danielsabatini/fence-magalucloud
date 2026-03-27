@@ -119,8 +119,8 @@ Autenticação via header `x-api-key`. Região padrão: `br-se1`.
 ### Debian / Ubuntu
 
 ```bash
-apt-get update
-apt-get install -y pacemaker corosync pcs fence-agents-common python3-requests
+sudo apt-get update
+sudo apt-get install -y pacemaker corosync pcs fence-agents-common python3-requests
 ```
 
 > `fence-agents-common` provê a biblioteca `fencing.py` em `/usr/share/fence/`.
@@ -130,8 +130,8 @@ apt-get install -y pacemaker corosync pcs fence-agents-common python3-requests
 Habilitar e iniciar o daemon `pcsd`:
 
 ```bash
-systemctl enable --now pcsd
-passwd hacluster   # definir a mesma senha em todos os nós
+sudo systemctl enable --now pcsd
+sudo passwd hacluster   # definir a mesma senha em todos os nós
 ```
 
 ### Red Hat / Rocky Linux / AlmaLinux
@@ -139,10 +139,10 @@ passwd hacluster   # definir a mesma senha em todos os nós
 Ativar o repositório de Alta Disponibilidade:
 
 ```bash
-dnf config-manager --set-enabled highavailability
-dnf install -y pacemaker pcs psmisc policycoreutils-python3 fence-agents-all python3-requests
-systemctl enable --now pcsd
-passwd hacluster
+sudo dnf config-manager --set-enabled highavailability
+sudo dnf install -y pacemaker pcs psmisc policycoreutils-python3 fence-agents-all python3-requests
+sudo systemctl enable --now pcsd
+sudo passwd hacluster
 ```
 
 ---
@@ -152,33 +152,42 @@ passwd hacluster
 ### Opção A — Instalação via pip (recomendada)
 
 ```bash
-pip install fence-magalucloud
+sudo pip install fence-magalucloud
 ```
 
 O agente é instalado em `/usr/local/bin/fence_magalucloud` (ou no `bin/` do virtualenv).
 
 ### Opção B — Instalação manual
 
-Certifique-se de que `python3` está instalado no nó:
+Certifique-se de que `python3` e `python3-requests` estão instalados no nó:
 
 ```bash
 # Debian/Ubuntu
-apt-get install -y python3 python3-requests
+sudo apt-get install -y python3 python3-requests
 
 # Red Hat / Rocky / AlmaLinux
-dnf install -y python3 python3-requests
+sudo dnf install -y python3 python3-requests
 ```
 
-Copie o agente para o diretório padrão dos fence agents:
+Copie o agente e a biblioteca `fencing.py` inclusa no projeto:
 
 ```bash
-install -m 0755 src/fence_magalucloud/fence_magalucloud.py /usr/sbin/fence_magalucloud
+# Instalar o agente
+sudo install -m 0755 src/fence_magalucloud/fence_magalucloud.py /usr/sbin/fence_magalucloud
+
+# Instalar a biblioteca fencing do projeto (sem depender de pacotes do SO)
+sudo install -m 0644 src/fence_magalucloud/fencing.py /usr/sbin/fencing.py
 ```
+
+> A `fencing.py` inclusa no projeto já tem as correções de compatibilidade com Python 3.12+
+> (escape sequences em regex), eliminando os `SyntaxWarning` gerados pela versão
+> empacotada nas distribuições. Não é necessário instalar `fence-agents-common` ou
+> `fence-agents-all`.
 
 Verifique que o agente responde aos metadados:
 
 ```bash
-fence_magalucloud -o metadata
+sudo /usr/sbin/fence_magalucloud -o metadata
 ```
 
 A saída deve ser um documento XML com os parâmetros `api-key`, `region`, `port` e demais
@@ -192,20 +201,20 @@ opções padrão do fencing.
 
 ```bash
 # Autenticar os nós
-pcs host auth node1 node2
+sudo pcs host auth node1 node2
 
 # Criar o cluster
-pcs cluster setup mycluster node1 addr=192.168.1.101 node2 addr=192.168.1.102
+sudo pcs cluster setup mycluster node1 addr=192.168.1.101 node2 addr=192.168.1.102
 
 # Iniciar em todos os nós
-pcs cluster start --all
-pcs cluster enable --all
+sudo pcs cluster start --all
+sudo pcs cluster enable --all
 ```
 
 ### 2. Verificar o estado do cluster
 
 ```bash
-pcs status
+sudo pcs status
 ```
 
 Saída esperada (sem fencing ainda):
@@ -226,7 +235,7 @@ Node List:
 ### 3. Criar o recurso de fencing
 
 ```bash
-pcs stonith create fence-magalucloud fence_magalucloud \
+sudo pcs stonith create fence-magalucloud fence_magalucloud \
     api-key="<SUA_API_KEY>" \
     region="br-se1" \
     pcmk_host_map="node1:<vm-id-node1>;node2:<vm-id-node2>" \
@@ -249,13 +258,13 @@ Parâmetros:
 ### 4. Habilitar o STONITH no cluster
 
 ```bash
-pcs property set stonith-enabled=true
+sudo pcs property set stonith-enabled=true
 ```
 
 ### 5. Verificar o recurso de fencing
 
 ```bash
-pcs stonith
+sudo pcs stonith
 ```
 
 Saída esperada:
@@ -265,7 +274,7 @@ Saída esperada:
 ```
 
 ```bash
-pcs status resources
+sudo pcs status resources
 ```
 
 Saída esperada:
@@ -283,18 +292,88 @@ Saída esperada:
 Verifica que o agente está instalado e responde corretamente:
 
 ```bash
-fence_magalucloud -o metadata
+sudo /usr/sbin/fence_magalucloud -o metadata
 ```
 
-Saída esperada: documento XML com a tag `<resource-agent name="fence_magalucloud" ...>`.
+Saída esperada:
+
+```xml
+<?xml version="1.0" ?>
+<resource-agent name="fence_magalucloud" shortdesc="Fence agent para instâncias de VM no Magalu Cloud" >
+<longdesc>fence_magalucloud é um fence agent que interage com a API REST do Magalu Cloud para gerenciar o estado de energia de instâncias de máquinas virtuais. Suporta as ações: on, off, reboot, status e list.</longdesc>
+<vendor-url>https://magalu.cloud</vendor-url>
+<parameters>
+        <parameter name="action" unique="0" required="1">
+                <getopt mixed="-o, --action=[action]" />
+                <content type="string" default="reboot"  />
+                <shortdesc lang="en">Fencing action</shortdesc>
+        </parameter>
+        <parameter name="api_key" unique="0" required="1">
+                <getopt mixed="--api-key=[key]" />
+                <content type="string"  />
+                <shortdesc lang="en">Chave de API do Magalu Cloud</shortdesc>
+        </parameter>
+        <parameter name="plug" unique="0" required="1" obsoletes="port">
+                <getopt mixed="-n, --plug=[id]" />
+                <content type="string"  />
+                <shortdesc lang="en">Physical plug number on device, UUID or identification of machine</shortdesc>
+        </parameter>
+        <parameter name="region" unique="0" required="0">
+                <getopt mixed="--region=[region]" />
+                <content type="string" default="br-se1"  />
+                <shortdesc lang="en">Região do Magalu Cloud</shortdesc>
+        </parameter>
+        <parameter name="delay" unique="0" required="0">
+                <getopt mixed="--delay=[seconds]" />
+                <content type="second" default="0"  />
+                <shortdesc lang="en">Wait X seconds before fencing is started</shortdesc>
+        </parameter>
+        <parameter name="shell_timeout" unique="0" required="0">
+                <getopt mixed="--shell-timeout=[seconds]" />
+                <content type="second" default="3"  />
+                <shortdesc lang="en">Wait X seconds for cmd prompt after issuing command</shortdesc>
+        </parameter>
+        ...
+</parameters>
+<actions>
+        <action name="on" automatic="0"/>
+        <action name="off" />
+        <action name="reboot" />
+        <action name="status" />
+        <action name="list" />
+        <action name="list-status" />
+        <action name="monitor" />
+        <action name="metadata" />
+        <action name="manpage" />
+        <action name="validate-all" />
+</actions>
+</resource-agent>
+```
 
 ### Teste 2 — Help
 
 ```bash
-fence_magalucloud --help
+sudo /usr/sbin/fence_magalucloud --help
 ```
 
-Saída esperada: lista de parâmetros com `--api-key`, `--region`, `--plug`, etc.
+Saída esperada:
+
+```
+Usage:
+	fence_magalucloud [options]
+
+Options:
+   -o, --action=[action]          Fencing action (default: reboot)
+       --api-key=[key]            Chave de API para autenticação no Magalu Cloud
+   -n, --plug=[id]                ID da VM (UUID da instância no Magalu Cloud)
+       --region=[region]          Região do Magalu Cloud (padrão: br-se1)
+       --delay=[seconds]          Wait X seconds before fencing is started (default: 0)
+       --shell-timeout=[seconds]  Wait X seconds for cmd prompt after issuing command (default: 3)
+   -v, --verbose                  Verbose mode
+   -D, --debug-file=[debugfile]   Write debug information to given file
+   -V, --version                  Display version information and exit
+   -h, --help                     Display help and exit
+```
 
 ### Teste 3 — Status via stdin (simula o Pacemaker)
 
@@ -302,7 +381,7 @@ Saída esperada: lista de parâmetros com `--api-key`, `--region`, `--plug`, etc
 echo "action=status
 api-key=<SUA_API_KEY>
 plug=<VM_ID>
-region=br-se1" | fence_magalucloud
+region=br-se1" | sudo /usr/sbin/fence_magalucloud
 ```
 
 Saída esperada: `Status: ON` ou `Status: OFF` com exit code `0`.
@@ -310,7 +389,7 @@ Saída esperada: `Status: ON` ou `Status: OFF` com exit code `0`.
 ### Teste 4 — Status via linha de comando
 
 ```bash
-fence_magalucloud \
+sudo /usr/sbin/fence_magalucloud \
     --action=status \
     --api-key=<SUA_API_KEY> \
     --plug=<VM_ID> \
@@ -320,7 +399,7 @@ fence_magalucloud \
 ### Teste 5 — Listar instâncias
 
 ```bash
-fence_magalucloud \
+sudo /usr/sbin/fence_magalucloud \
     --action=list \
     --api-key=<SUA_API_KEY> \
     --region=br-se1
@@ -336,7 +415,7 @@ Saída esperada:
 ### Teste 6 — Monitor (verifica acessibilidade da API)
 
 ```bash
-fence_magalucloud \
+sudo /usr/sbin/fence_magalucloud \
     --action=monitor \
     --api-key=<SUA_API_KEY> \
     --region=br-se1
@@ -351,10 +430,10 @@ Saída esperada: exit code `0` (API acessível).
 
 ```bash
 # Parar o cluster no nó alvo (simula nó não-responsivo)
-pcs cluster stop node2
+sudo pcs cluster stop node2
 
 # Executar o fencing a partir do nó primário
-pcs stonith fence node2
+sudo pcs stonith fence node2
 ```
 
 Saída esperada:
@@ -366,7 +445,7 @@ Node: node2 fenced
 Verificar no log do Pacemaker:
 
 ```bash
-journalctl -u pacemaker --since "5 minutes ago" | grep -i fence
+sudo journalctl -u pacemaker --since "5 minutes ago" | grep -i fence
 ```
 
 Saída esperada (trecho):
@@ -379,7 +458,7 @@ pacemaker-controld  Node node2 was successfully fenced by node1
 Após o teste, reiniciar o cluster no nó fenced:
 
 ```bash
-pcs cluster start node2
+sudo pcs cluster start node2
 ```
 
 ### Teste 8 — stonith_admin (diagnóstico avançado)
@@ -387,19 +466,19 @@ pcs cluster start node2
 Listar todos os devices de fencing registrados:
 
 ```bash
-stonith_admin -L
+sudo stonith_admin -L
 ```
 
 Consultar o status de um nó via o device:
 
 ```bash
-stonith_admin -Q -r fence-magalucloud -t node2
+sudo stonith_admin -Q -r fence-magalucloud -t node2
 ```
 
 Forçar fencing manual de um nó:
 
 ```bash
-stonith_admin -F node2
+sudo stonith_admin -F node2
 ```
 
 ---
@@ -409,7 +488,7 @@ stonith_admin -F node2
 ### Estado completo do cluster
 
 ```bash
-pcs status
+sudo pcs status
 ```
 
 Saída esperada com fencing configurado e cluster saudável:
@@ -437,7 +516,7 @@ Daemon Status:
 ### Verificar configuração sem erros
 
 ```bash
-pcs cluster verify --full
+sudo pcs cluster verify --full
 ```
 
 Saída esperada: nenhuma saída (sem erros).
@@ -445,7 +524,7 @@ Saída esperada: nenhuma saída (sem erros).
 ### Verificar comunicação Corosync
 
 ```bash
-corosync-cfgtool -s
+sudo corosync-cfgtool -s
 ```
 
 Saída esperada:
@@ -461,7 +540,7 @@ RING ID 0
 ### Verificar processos do Pacemaker
 
 ```bash
-ps axf | grep pacemaker
+sudo ps axf | grep pacemaker
 ```
 
 Saída esperada — os 7 daemons ativos:
