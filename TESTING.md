@@ -10,7 +10,6 @@ source .env
 ```
 
 ---
-```
 ## Fase 1 — Testes locais (`uv run`)
 
 ### 1.1 Sanidade
@@ -183,7 +182,7 @@ echo "exit esperado: 2 | obtido: $?"
 ## Fase 2 — Testes no servidor do cluster (sem Pacemaker)
 
 Os comandos de instalação são executados **dentro de cada nó** via SSH.
-O `make install` clona o repositório e copia os arquivos para `/usr/sbin/` automaticamente.
+O `make install` instala as dependências e copia os arquivos para `/usr/sbin/` automaticamente.
 
 ---
 
@@ -291,8 +290,8 @@ Saída esperada:
 
 ### 2.1. Conectar no nó 1 do cluster
 ```bash
-# Conectar em nó 1 (CLS1)
-ssh $USER@$CLS1_IP
+# Substitua <usuario>, <chave.pem> e <ip-ou-hostname> pelos valores reais
+ssh -i ~/.ssh/<chave.pem> <usuario>@<ip-ou-hostname-cls1>
 ```
 
 ```bash
@@ -449,8 +448,8 @@ echo "exit esperado: 2 | obtido: $?"
 
 ### 2.8. Conectar no nó 2 do cluster
 ```bash
-# Conectar em cls2
-ssh $USER@$CLS2_IP
+# Substitua <usuario>, <chave.pem> e <ip-ou-hostname> pelos valores reais
+ssh -i ~/.ssh/<chave.pem> <usuario>@<ip-ou-hostname-cls2>
 ```
 
 ```bash
@@ -460,13 +459,13 @@ export REGION='br-ne1'
 # Incluir o ID da VM do nó 1 (CLS1)
 export VM_ID='12247f87-734a-4722-bd39-14dd5342f1b1'
 ```
-**Executar os teste de 2.2. até 2.7.**
+**Executar os testes de 2.2 até 2.7.**
 
 ## Fase 3 — Integração com o Pacemaker
 
 **Pré-requisito:** Fase 2 concluída em todos os nós. Executar no nó primário do cluster (cls1).
 
-> **Atenção:** os testes 3.4 e 3.6 causam desligamento real da VM. Confirme antes de executar.
+> **Atenção:** o teste 3.4 causa desligamento real do nó alvo. Confirme antes de executar.
 
 > **Topologia:** cada agente STONITH deve rodar no nó **oposto** ao que ele fenceia.
 > `fence-cls1` (fenceia cls1) deve rodar em cls2, e `fence-cls2` (fenceia cls2) deve rodar em cls1.
@@ -736,28 +735,7 @@ Pacemaker Nodes:
 
 ---
 
-### 3.5 Verificar logs do Pacemaker após fencing
-
-Executar em **cls1** (cls2 pode estar offline):
-
-```bash
-# Logs do fencing nos últimos registros
-sudo grep fence /var/log/syslog | tail -20
-```
-
-Saída esperada — linhas-chave a confirmar:
-```
-pacemaker-fenced: notice: Client stonith_admin wants to fence (reboot) cls2 using any device
-pacemaker-fenced: notice: Requesting that cls1 perform 'reboot' action targeting cls2
-pacemaker-fenced: notice: Node cls2 state is now lost
-pacemaker-fenced: notice: Operation 'reboot' targeting cls2 using fence-cls2 returned 0
-pacemaker-fenced: notice: Operation 'reboot' targeting cls2 by cls1 for stonith_admin: OK (complete)
-pacemaker-fenced: notice: Node cls2 state is now member
-```
-
----
-
-### 3.6 Restaurar o nó após fencing com `--off`
+### 3.5 Restaurar o nó após fencing com `--off`
 
 > Esta seção só se aplica se o fencing foi executado com `--off` (desligamento permanente).
 > No teste padrão (3.4), o Pacemaker usa reboot e o nó volta ao cluster automaticamente — nenhuma ação manual é necessária.
