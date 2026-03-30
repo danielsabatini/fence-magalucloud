@@ -25,6 +25,7 @@ sys.path.append('@FENCEAGENTSLIBDIR@')
 try:
     from fencing import *  # noqa: F401, F403 — padrão obrigatório do ClusterLabs
     from fencing import (
+        EC_BAD_ARGS,
         EC_LOGIN_DENIED,
         EC_STATUS,
         all_opt,
@@ -43,6 +44,7 @@ except ImportError:
     sys.path.insert(0, str(pathlib.Path(__file__).parent))
     from fencing import *  # noqa: F401, F403
     from fencing import (
+        EC_BAD_ARGS,
         EC_LOGIN_DENIED,
         EC_STATUS,
         all_opt,
@@ -67,6 +69,7 @@ state = {
 }
 
 HTTP_UNAUTHORIZED = 401
+HTTP_FORBIDDEN = 403
 HTTP_NOT_FOUND = 404
 
 
@@ -126,14 +129,20 @@ def _request(method: str, url: str, headers: dict, options: dict, **kwargs) -> r
     permitindo que o operador o configure via Pacemaker sem alterar o agente.
     """
     timeout = int(options.get('--shell-timeout', 30))
+    # Pacemaker 2.0+ passa disable_timeout=true, zerando --shell-timeout.
+    # requests não aceita timeout=0; None significa sem limite.
+    effective_timeout = timeout if timeout > 0 else None
     try:
-        response = requests.request(method, url, headers=headers, timeout=timeout, **kwargs)
+        response = requests.request(method, url, headers=headers, timeout=effective_timeout, **kwargs)
     except requests.exceptions.RequestException as exc:
         logging.error('fence_magalucloud: erro de conexão: %s', exc)
         fail(EC_STATUS)
 
-    if response.status_code == HTTP_UNAUTHORIZED:
-        logging.error('fence_magalucloud: autenticação recusada (401) — verifique --api-key')
+    if response.status_code in (HTTP_UNAUTHORIZED, HTTP_FORBIDDEN):
+        logging.error(
+            'fence_magalucloud: autenticação recusada (%s) — verifique --api-key',
+            response.status_code,
+        )
         fail(EC_LOGIN_DENIED)
 
     return response
@@ -297,6 +306,8 @@ def main():
     options = check_input(device_opt, process_input(device_opt))
 
     # 4. Metadados exibidos pelo Pacemaker ao consultar o agente (-o metadata)
+    # Executado antes da validação de --api-key para que --help e -o metadata
+    # funcionem sem credenciais (padrão ClusterLabs)
     docs = {
         'shortdesc': 'Fence agent para instâncias de VM no Magalu Cloud',
         'longdesc': (
@@ -307,6 +318,12 @@ def main():
         'vendorurl': 'https://magalu.cloud',
     }
     show_docs(options, docs)
+
+    # check_input não valida opções customizadas com required='1' — validar explicitamente
+    # (após show_docs para que --help e -o metadata não exijam --api-key)
+    if not options.get('--api-key'):
+        logging.error('fence_magalucloud: --api-key é obrigatório')
+        sys.exit(EC_BAD_ARGS)
 
     # 5. Aguarda o delay de fencing (configurável via --delay)
     run_delay(options)

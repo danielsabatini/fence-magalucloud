@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-fence-magalucloud     = "fence_magalucloud:main"
+fence-magalucloud     = "fence_magalucloud.fence_magalucloud:main"
 
 [build-system]
 requires = ["hatchling"]

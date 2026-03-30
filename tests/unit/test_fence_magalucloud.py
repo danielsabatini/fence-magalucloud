@@ -1,3 +1,4 @@
+import atexit
 import logging
 import sys
 from unittest.mock import MagicMock, patch
@@ -7,10 +8,16 @@ import requests
 
 # ---------------------------------------------------------------------------
 # Stub mínimo da lib fencing para isolar os testes do módulo externo
+#
+# Valores reais (confirmados em produção na Fase 1 de testes):
+#   EC_STATUS       = 8   (VM não encontrada, falha de status, erro de conexão)
+#   EC_LOGIN_DENIED = 3   (HTTP 401 ou 403 — chave inválida)
+#   EC_BAD_ARGS     = 2   (parâmetros obrigatórios ausentes)
 # ---------------------------------------------------------------------------
 
-EC_STATUS = 1
-EC_LOGIN_DENIED = 2
+EC_STATUS = 8
+EC_LOGIN_DENIED = 3
+EC_BAD_ARGS = 2
 
 
 def _fail_stub(code):
@@ -20,6 +27,7 @@ def _fail_stub(code):
 fencing_stub = MagicMock()
 fencing_stub.EC_STATUS = EC_STATUS
 fencing_stub.EC_LOGIN_DENIED = EC_LOGIN_DENIED
+fencing_stub.EC_BAD_ARGS = EC_BAD_ARGS
 fencing_stub.all_opt = {}
 fencing_stub.atexit_handler = MagicMock()
 fencing_stub.check_input = MagicMock()
@@ -37,15 +45,19 @@ import fence_magalucloud.fence_magalucloud as agent  # noqa: E402
 # Fixtures
 # ---------------------------------------------------------------------------
 
-BASE_URL = 'https://api.magalu.cloud/br-se1/compute/v1'
+BASE_URL = 'https://api.magalu.cloud/br-ne1/compute/v1'
+
+REAL_API_KEY = '50302b80-fc24-499e-b76f-c022df924a60'
+REAL_REGION = 'br-ne1'
+REAL_VM_ID = '12247f87-734a-4722-bd39-14dd5342f1b1'
 
 
 @pytest.fixture
 def options():
     return {
-        '--api-key': 'test-key',
-        '--region': 'br-se1',
-        '--plug': 'vm-abc-123',
+        '--api-key': REAL_API_KEY,
+        '--region': REAL_REGION,
+        '--plug': REAL_VM_ID,
         '--action': 'off',
         '--shell-timeout': '30',
     }
@@ -81,7 +93,7 @@ class TestBaseUrl:
 class TestHeaders:
     def test_contains_api_key(self, options):
         headers = agent._headers(options)
-        assert headers['x-api-key'] == 'test-key'
+        assert headers['x-api-key'] == REAL_API_KEY
 
     def test_contains_accept_json(self, options):
         headers = agent._headers(options)
@@ -114,6 +126,24 @@ class TestRequest:
         with pytest.raises(SystemExit) as exc_info:
             agent._request('GET', f'{BASE_URL}/instances', {}, options)
         assert exc_info.value.code == EC_LOGIN_DENIED
+
+    @patch('fence_magalucloud.fence_magalucloud.requests.request')
+    def test_403_calls_fail_with_login_denied(self, mock_req, options):
+        # Magalu Cloud retorna 403 (não 401) para chaves inválidas — confirmado em produção
+        mock_req.return_value = _mock_response(403, ok=False)
+        with pytest.raises(SystemExit) as exc_info:
+            agent._request('GET', f'{BASE_URL}/instances', {}, options)
+        assert exc_info.value.code == EC_LOGIN_DENIED
+
+    @patch('fence_magalucloud.fence_magalucloud.requests.request')
+    def test_zero_timeout_uses_none(self, mock_req, options):
+        # Pacemaker 2.0+ passa disable_timeout=true, zerando --shell-timeout.
+        # timeout=0 deve ser convertido para None (sem limite) — requests rejeita 0.
+        options['--shell-timeout'] = '0'
+        mock_req.return_value = _mock_response(200)
+        agent._request('GET', f'{BASE_URL}/instances', {}, options)
+        _, kwargs = mock_req.call_args
+        assert kwargs['timeout'] is None
 
     @patch('fence_magalucloud.fence_magalucloud.requests.request')
     def test_connection_error_calls_fail_with_ec_status(self, mock_req, options):
@@ -170,14 +200,14 @@ class TestGetPowerStatus:
         mock_req.return_value = _mock_response(200, {'state': 'running'})
         agent.get_power_status(None, options)
         url_arg = mock_req.call_args[0][1]
-        assert url_arg == f'{BASE_URL}/instances/vm-abc-123'
+        assert url_arg == f'{BASE_URL}/instances/{REAL_VM_ID}'
 
     @patch('fence_magalucloud.fence_magalucloud._request')
     def test_logs_debug_on_success(self, mock_req, options, caplog):
         mock_req.return_value = _mock_response(200, {'state': 'running'})
         with caplog.at_level(logging.DEBUG):
             agent.get_power_status(None, options)
-        assert 'vm-abc-123' in caplog.text
+        assert REAL_VM_ID in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -306,3 +336,33 @@ class TestDefineNewOpts:
             assert 'region' in mock_opt
             assert mock_opt['region']['default'] == 'br-se1'
             assert mock_opt['region']['required'] == '0'
+
+
+# ---------------------------------------------------------------------------
+# main — validação de --api-key ausente
+# ---------------------------------------------------------------------------
+
+
+class TestMain:
+    def test_exits_bad_args_when_api_key_missing(self):
+        """
+        check_input não valida opções customizadas com required='1'.
+        main() deve detectar --api-key ausente e sair com EC_BAD_ARGS (2).
+        Comportamento confirmado em produção na Fase 1 (1.6).
+        """
+        options_without_key = {
+            '--region': REAL_REGION,
+            '--plug': REAL_VM_ID,
+            '--action': 'status',
+        }
+        with (
+            patch('fence_magalucloud.fence_magalucloud.process_input', return_value={}),
+            patch(
+                'fence_magalucloud.fence_magalucloud.check_input',
+                return_value=options_without_key,
+            ),
+            patch('fence_magalucloud.fence_magalucloud.show_docs'),
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                agent.main()
+            assert exc_info.value.code == EC_BAD_ARGS
