@@ -47,9 +47,9 @@ import fence_magalucloud.fence_magalucloud as agent  # noqa: E402
 
 BASE_URL = 'https://api.magalu.cloud/br-ne1/compute/v1'
 
-REAL_API_KEY = '50302b80-fc24-499e-b76f-c022df924a60'
+REAL_API_KEY = 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
 REAL_REGION = 'br-ne1'
-REAL_VM_ID = '12247f87-734a-4722-bd39-14dd5342f1b1'
+REAL_VM_ID = 'yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy'
 
 
 @pytest.fixture
