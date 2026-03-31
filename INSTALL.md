@@ -443,8 +443,40 @@ Full List of Resources:
 
 ---
 
-## 17. Interface web — pcs-web-ui (opcional)
+## 17. Interfaces web (opcionais)
 
+### Cockpit — porta 9090
+
+O Cockpit é instalado no passo 2 e fica disponível imediatamente após o boot.
+Habilite e inicie o serviço em **ambos os nós**:
+
+```bash
+sudo systemctl enable --now cockpit.socket
+```
+
+Acesso direto via browser:
+
+```
+http://$IP_NODE1:9090
+http://$IP_NODE2:9090
+```
+
+Ou via SSH tunnel (quando a porta 9090 não está exposta publicamente):
+
+```bash
+ssh -f -N \
+  -L 9090:localhost:9090 \
+  -i ~/.ssh/<chave.pem> \
+  <usuario>@$IP_NODE1
+```
+
+Acesse em seguida: `http://localhost:9090`
+
+---
+
+### pcs-web-ui — porta 2224
+
+Interface web do PCS para gerenciamento do cluster Pacemaker.
 Execute em um dos nós:
 
 ```bash
@@ -467,7 +499,7 @@ cd packages/app && npm install --package-lock-only && cd ../..
 ./autogen.sh && ./configure && make && sudo make install
 ```
 
-Acesso via browser:
+Acesso direto via browser:
 
 ```
 https://$IP_NODE1:2224
