@@ -78,7 +78,10 @@ sudo apt install -y \
   make \
   cockpit \
   python3-requests \
-  fence-agents-common
+  fence-agents-common \
+  resource-agents-extra \
+  resource-agents-common \
+  resource-agents-base
 ```
 
 ---
